@@ -4,11 +4,9 @@ import path from 'path';
 // ==========================================
 // ⚙️ CONFIGURATION (UPSTREAM API & BRANDING)
 // ==========================================
-// Upstream API badalne ke liye bas niche diye gaye URL ko edit karein:
-// {query} ki jagah user ka mobile number automatically replace ho jayega.
 const UPSTREAM_API_CONFIG = {
-  url: "https://leak-osint.noob73613.workers.dev/?query={query}",
-  timeout: 15000 // 15 seconds timeout
+  url: "https://numinfo100ms.ghddys32.workers.dev/?mobile={query}",
+  timeout: 15000
 };
 
 const BRAND_CONFIG = {
@@ -18,6 +16,58 @@ const BRAND_CONFIG = {
   whatsapp: "+63 9620658587",
   contact: "WhatsApp: +63 9620658587 | Telegram: @Zeno098"
 };
+
+// Helper: Clean and format fields
+const cleanValue = (val) => {
+  if (val === null || val === undefined || val === "null" || val === "undefined" || val === "N/A" || val === "") {
+    return "Not Found";
+  }
+  const cleaned = String(val)
+    .replace(/!+/g, ', ')
+    .replace(/^[^a-zA-Z0-9\s,.-]+/g, '')
+    .trim();
+  return cleaned.length > 0 ? cleaned : "Not Found";
+};
+
+// Helper: Parse Plain Text Blocks into Objects
+function parsePlainText(text) {
+  const records = [];
+  const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+
+  for (const block of blocks) {
+    const entry = {};
+    const lines = block.split('\n');
+    for (const line of lines) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex !== -1) {
+        const key = line.slice(0, colonIndex).trim().toLowerCase();
+        const val = line.slice(colonIndex + 1).trim();
+
+        if (key.includes('father')) {
+          entry.fatherName = val;
+        } else if (key.includes('name')) {
+          entry.name = val;
+        } else if (key.includes('phone') || key.includes('mobile')) {
+          entry.number = val;
+        } else if (key.includes('address')) {
+          entry.address = val;
+        } else if (key.includes('circle') || key.includes('region')) {
+          entry.circle = val;
+        } else if (key.includes('email')) {
+          entry.email = val;
+        } else if (key.includes('document') || key.includes('id') || key.includes('passport')) {
+          entry.idNumber = val;
+        } else if (key.includes('alt')) {
+          entry.alternateNumber = val;
+        }
+      }
+    }
+    if (Object.keys(entry).length > 0) {
+      records.push(entry);
+    }
+  }
+  return records;
+}
 
 // ==========================================
 // 🚀 MAIN API HANDLER
@@ -118,7 +168,7 @@ export default async function handler(req, res) {
       return res.status(response.status).json({ success: false, message: "Upstream API error" });
     }
 
-    const upstreamData = await response.json();
+    const rawResponseText = await response.text();
 
     // Increment usage
     userRecord.usage.count += 1;
@@ -129,38 +179,35 @@ export default async function handler(req, res) {
       console.error("Could not write usage data to disk", e);
     }
 
-    // 8. Universal Record Extractor (Deep Recursive)
+    // 8. Extraction (Supports JSON and Plain Text)
     let rawRecords = [];
 
-    function extractRecords(obj) {
-      if (!obj) return;
-      if (Array.isArray(obj)) {
-        obj.forEach(item => extractRecords(item));
-        return;
-      }
-      if (typeof obj === 'object') {
-        if (Array.isArray(obj.records)) {
-          rawRecords.push(...obj.records);
-        } else if (
-          obj.full_name ||
-          obj.name ||
-          obj.nick ||
-          obj.phone ||
-          obj.mobile ||
-          obj.the_name_of_the_father ||
-          obj.fname ||
-          obj.address
-        ) {
-          rawRecords.push(obj);
+    try {
+      const parsedJSON = JSON.parse(rawResponseText);
+      function extractRecords(obj) {
+        if (!obj) return;
+        if (Array.isArray(obj)) {
+          obj.forEach(item => extractRecords(item));
+          return;
         }
-
-        if (obj.data) extractRecords(obj.data);
-        if (obj.result) extractRecords(obj.result);
-        if (obj.results) extractRecords(obj.results);
+        if (typeof obj === 'object') {
+          if (Array.isArray(obj.records)) {
+            rawRecords.push(...obj.records);
+          } else if (
+            obj.full_name || obj.name || obj.nick || obj.phone ||
+            obj.mobile || obj.the_name_of_the_father || obj.fname || obj.address
+          ) {
+            rawRecords.push(obj);
+          }
+          if (obj.data) extractRecords(obj.data);
+          if (obj.result) extractRecords(obj.result);
+          if (obj.results) extractRecords(obj.results);
+        }
       }
+      extractRecords(parsedJSON);
+    } catch {
+      rawRecords = parsePlainText(rawResponseText);
     }
-
-    extractRecords(upstreamData);
 
     if (!rawRecords || rawRecords.length === 0) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -174,19 +221,7 @@ export default async function handler(req, res) {
       }, null, 2));
     }
 
-    // Helper: Clean and format fields
-    const cleanValue = (val) => {
-      if (val === null || val === undefined || val === "null" || val === "undefined" || val === "N/A" || val === "") {
-        return "Not Found";
-      }
-      const cleaned = String(val)
-        .replace(/!+/g, ', ')
-        .replace(/^[^a-zA-Z0-9\s,.-]+/g, '')
-        .trim();
-      return cleaned.length > 0 ? cleaned : "Not Found";
-    };
-
-    // Format & map all known field variants
+    // Format & map fields
     const formattedRecords = rawRecords.map(record => ({
       name: cleanValue(record.full_name || record.name || record.nick),
       fatherName: cleanValue(record.the_name_of_the_father || record.fname || record.father_name || record.fatherName),
