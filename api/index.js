@@ -32,11 +32,15 @@ const cleanValue = (val) => {
 // Helper: Parse Plain Text Blocks into Objects
 function parsePlainText(text) {
   const records = [];
-  const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+
+  // Remove leading @ tags/header artifacts and split across varying newline formats
+  const cleanText = text.replace(/^@\w+[\r\n]*/, '');
+  const blocks = cleanText.split(/(?:\r?\n){2,}/).map(b => b.trim()).filter(Boolean);
 
   for (const block of blocks) {
     const entry = {};
-    const lines = block.split('\n');
+    const lines = block.split(/\r?\n/);
+
     for (const line of lines) {
       const colonIndex = line.indexOf(':');
       if (colonIndex !== -1) {
@@ -62,6 +66,7 @@ function parsePlainText(text) {
         }
       }
     }
+
     if (Object.keys(entry).length > 0) {
       records.push(entry);
     }
@@ -160,9 +165,17 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 7. Request Upstream API
+    // 7. Request Upstream API with Browser Headers
     const targetUrl = UPSTREAM_API_CONFIG.url.replace('{query}', encodeURIComponent(num));
-    const response = await fetch(targetUrl, { signal: AbortSignal.timeout(UPSTREAM_API_CONFIG.timeout) });
+    const response = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9'
+      },
+      signal: AbortSignal.timeout(UPSTREAM_API_CONFIG.timeout)
+    });
 
     if (!response.ok) {
       return res.status(response.status).json({ success: false, message: "Upstream API error" });
